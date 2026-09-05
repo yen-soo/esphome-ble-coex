@@ -38,7 +38,7 @@ static const char *const TAG = "esp32_ble_tracker";
 // GATT event. 10s covers typical login/read/discovery bursts (events spaced
 // well under 10s) while starving Wi-Fi for far less than the ~20-60s needed
 // for AP-side beacon loss (the 'Unspecified' disconnect signature).
-static constexpr uint32_t GATT_COEX_HOLD_MS = 10000;
+static constexpr uint32_t GATT_COEX_HOLD_MS = 25000;
 
 ESP32BLETracker *global_esp32_ble_tracker = nullptr;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
