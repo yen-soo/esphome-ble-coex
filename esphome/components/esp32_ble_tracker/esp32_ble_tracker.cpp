@@ -34,6 +34,12 @@ namespace esphome::esp32_ble_tracker {
 
 static const char *const TAG = "esp32_ble_tracker";
 
+// E-B narrow coexistence gate: hold PREFER_BT this long after the most recent
+// GATT event. 10s covers typical login/read/discovery bursts (events spaced
+// well under 10s) while starving Wi-Fi for far less than the ~20-60s needed
+// for AP-side beacon loss (the 'Unspecified' disconnect signature).
+static constexpr uint32_t GATT_COEX_HOLD_MS = 10000;
+
 ESP32BLETracker *global_esp32_ble_tracker = nullptr;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
 float ESP32BLETracker::get_setup_priority() const { return setup_priority::AFTER_BLUETOOTH; }
@@ -180,13 +186,15 @@ void ESP32BLETracker::loop() {
   // clients do NOT block this branch — the coex revert below has its own active-count gate.
   if (this->scanner_state_ == ScannerState::IDLE && !counts.connecting && !counts.disconnecting && !counts.discovered) {
 #ifdef USE_ESP32_BLE_SOFTWARE_COEXISTENCE
-    // EXPERIMENT (yen-soo/esphome-ble-coex): restore pre-#16036 coexistence
-    // policy. #16036 holds PREFER_BT for the lifetime of an established
-    // connection; on long-lived BLE sessions (e.g. a BLE charger polled via
-    // an active bluetooth_proxy) this starves Wi-Fi until the AP kicks the
-    // STA (reason='Unspecified'). Revert to BALANCE as soon as transient
-    // states clear, exactly as before #16036 (commit dec5d04).
-    this->update_coex_preference_(false);
+    // E-B narrow coexistence gate (yen-soo/esphome-ble-coex): hold PREFER_BT
+    // only while GATT traffic is recent (last event < GATT_COEX_HOLD_MS ago),
+    // otherwise revert to BALANCE even with established connections.
+    // #16036's lifetime PREFER_BT starves Wi-Fi on long-lived BLE sessions
+    // (AP kicks the STA, reason='Unspecified'); full BALANCE starves GATT
+    // responses and teardown. Recent-activity gating protects the short
+    // in-flight windows and yields the idle radio back to Wi-Fi.
+    uint32_t since_gatt_ms = millis() - this->last_gatt_activity_ms_;
+    this->update_coex_preference_(since_gatt_ms < GATT_COEX_HOLD_MS);
 #endif
     if (this->scan_continuous_) {
       this->start_scan_(false);  // first = false
@@ -407,6 +415,10 @@ void ESP32BLETracker::gap_scan_stop_complete_(const esp_ble_gap_cb_param_t::ble_
 
 void ESP32BLETracker::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if,
                                           esp_ble_gattc_cb_param_t *param) {
+
+#ifdef USE_ESP32_BLE_SOFTWARE_COEXISTENCE
+  this->note_gatt_activity();
+#endif
 #ifdef ESPHOME_ESP32_BLE_TRACKER_CLIENT_COUNT
   for (auto *client : this->clients_) {
     client->gattc_event_handler(event, gattc_if, param);

@@ -166,6 +166,9 @@ class ESP32BLETracker final : public Component,
 #endif
                               public Parented<ESP32BLE> {
  public:
+  // E-B narrow coexistence gate (yen-soo/esphome-ble-coex): record GATT radio
+  // activity so loop() can hold PREFER_BT only while GATT traffic is recent.
+  void note_gatt_activity() { this->last_gatt_activity_ms_ = millis(); }
   void set_scan_duration(uint32_t scan_duration) { scan_duration_ = scan_duration; }
   void set_scan_interval(uint32_t scan_interval) { scan_interval_ = scan_interval; }
   void set_scan_window(uint32_t scan_window) { scan_window_ = scan_window; }
@@ -359,6 +362,7 @@ class ESP32BLETracker final : public Component,
 #endif
 #ifdef USE_ESP32_BLE_SOFTWARE_COEXISTENCE
   bool coex_prefer_ble_ : 1 {false};
+  uint32_t last_gatt_activity_ms_{0};
 #endif
   // Scan timeout state machine
   enum class ScanTimeoutState : uint8_t {
